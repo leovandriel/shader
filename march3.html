@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="description" content="https://www.shadertoy.com/view/Nlc3WH">
+  <title>March 3</title>
+  <style type="text/css">
+    body {
+      margin: 0px;
+    }
+    canvas {
+      border: none;
+    }
+    pre {
+      color: red;
+      margin: 1em;
+    }
+  </style>
+</head>
+<body>
+  <script id="fragment" type="x-shader/x-fragment">
+    precision mediump float;
+
+    uniform vec2 iResolution;
+    uniform float iTime;
+    uniform vec2 iMouse;
+
+    const int steps = 30;
+    const float mini = .01;
+    const float maxi = 100.;
+    const int reflections = 3;
+
+    float sphere(vec3 p, vec3 center) {
+        return length(p - center) - 1.;
+    }
+
+    float plane(vec3 p, vec3 normal) {
+        return dot(p, normal) + 5.;
+    }
+
+    float octa(vec3 p) {
+        return plane(abs(p), vec3(-.577));
+    }
+
+    float blob(vec3 p) {
+        float a = cos(max(iTime / 20., 1.57));
+        vec3 c = 1.5 * a * vec3(cos(iTime), 0., -sin(iTime));
+        float d1 = sphere(p, c);
+        float d2 = sphere(p, -c);
+        float h = clamp((d2 - d1) / 2. + .5, 0., 1.);
+        return mix(d2, d1, h) - h * (1. - h);
+    }
+
+    float map(vec3 p, float last) {
+        float d1 = octa(p);
+        float d2 = blob(p);
+        return mix(d2, d1, max(step(d1, d2), last));
+    }
+
+    vec3 normal(vec3 p) {
+        vec3 d = vec3(mini, 0., 0.);
+        vec3 o = vec3(map(p - d.xyy, 0.), map(p - d.yxy, 0.), map(p - d.yyx, 0.));
+        return normalize(vec3(map(p, 0.)) - o);
+    }
+
+    float march(vec3 origin, vec3 dir, float last) {
+        float sum = mini * 2., dist = sum;
+        for (int i = 0; i < steps; i++) {
+            vec3 p = origin + sum * dir;
+            dist = map(p, last);
+            sum += dist;
+            if (sum > maxi || dist < mini) {
+                break;
+            }
+        }
+        return sum;
+    }
+
+    float light(vec3 p, vec3 source, vec3 n) {
+        vec3 d = normalize(source - p);
+        return max(.0, dot(n, d) / 2.);
+    }
+
+    vec3 lights(vec3 p, vec3 n) {
+        float v1 = light(p, vec3(-3., 3., -3.), n);
+        float v2 = light(p, vec3(4.), n);
+        return vec3(v1 + v2);
+    }
+
+    vec3 render(vec3 origin, vec3 dir) {
+        vec3 p, n;
+        for (int j = 0; j <= reflections; j++) {
+            float last = step(float(reflections), float(j));
+            float dist = march(origin, dir, last);
+            p = origin + dist * dir;
+            n = normal(p);
+            dir = reflect(dir, n);
+            origin = p;
+        }
+        return lights(p, n);
+    }
+
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        vec2 uv = (fragCoord - iResolution.xy / 2.) / min(iResolution.x, iResolution.y);
+        float c = cos(iTime / 10.), s = sin(iTime / 10.);
+        vec3 origin = vec3(c * 4.5, 0., s * 4.5);
+        vec3 dir = normalize(vec3(-s * uv.x - c * 1., uv.y, -s * 1. + c * uv.x));
+        vec3 color = render(origin, dir);
+        fragColor = vec4(color, 1.);
+    }
+
+    void main() {
+        mainImage(gl_FragColor, gl_FragCoord.xy);
+    }
+  </script>
+
+  <script id="vertex" type="x-shader/x-vertex">
+    attribute vec2 inPos;
+
+    void main() {
+        gl_Position = vec4(inPos, 0.0, 1.0);
+    }
+  </script>
+
+  <canvas id="canvas"></canvas>
+
+  <script type="text/javascript">
+    let canvas = null;
+    let context = null;
+    let program = null;
+    let mouse = { x: 0, y: 0 };
+
+    function handleResize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    function handleRender(time) {
+      context.viewport(0, 0, canvas.width, canvas.height);
+      context.clear(context.COLOR_BUFFER_BIT | context.DEPTH_BUFFER_BIT);
+      context.uniform2f(program.iResolution, canvas.width, canvas.height);
+      context.uniform1f(program.iTime, time / 1000.0);
+      context.uniform2f(program.iMouse, mouse.x, mouse.y);
+      context.drawElements(context.TRIANGLES, 6, context.UNSIGNED_SHORT, 0);
+      requestAnimationFrame(handleRender);
+    }
+
+    function handleMouse(event) {
+      mouse = { x: e.clientX, y: e.clientY };
+    }
+
+    function reportError(message) {
+      const pre = document.createElement("pre");
+      pre.innerHTML = message;
+      document.body.insertBefore(pre, canvas);
+    }
+
+    function initContext() {
+      canvas = document.getElementById("canvas");
+      context = canvas.getContext("experimental-webgl");
+      if (!context) {
+        return reportError("Unable to get context experimental-webcontext.");
+      }
+      return context;
+    }
+
+    function initShader(program, id, type) {
+      const source = document.getElementById(id).text;
+      const shader = context.createShader(type);
+      context.shaderSource(shader, source);
+      context.compileShader(shader);
+      const status = context.getShaderParameter(shader, context.COMPILE_STATUS);
+      if (!status) {
+        return reportError(context.getShaderInfoLog(shader));
+      }
+      context.attachShader(program, shader);
+      context.linkProgram(program);
+      return shader;
+    }
+
+    function initProgram() {
+      program = context.createProgram();
+      if (!initShader(program, "vertex", context.VERTEX_SHADER)) {
+        return;
+      }
+      if (!initShader(program, "fragment", context.FRAGMENT_SHADER)) {
+        return;
+      }
+      if (!context.getProgramParameter(program, context.LINK_STATUS)) {
+        return reportError(context.getProgramInfoLog(program));
+      }
+      program.iResolution = context.getUniformLocation(program, "iResolution");
+      program.iTime = context.getUniformLocation(program, "iTime");
+      program.iMouse = context.getUniformLocation(program, "iMouse");
+      program.inPos = context.getAttribLocation(program, "inPos");
+      context.useProgram(program);
+      return program;
+    }
+
+    function initBuffer() {
+      const positionBuffer = context.createBuffer();
+      context.bindBuffer(context.ARRAY_BUFFER, positionBuffer);
+      const positions = [-1, -1, 1, -1, 1, 1, -1, 1];
+      context.bufferData(context.ARRAY_BUFFER, new Float32Array(positions), context.STATIC_DRAW);
+      const indexBuffer = context.createBuffer();
+      context.bindBuffer(context.ELEMENT_ARRAY_BUFFER, indexBuffer);
+      const indices = [0, 1, 2, 0, 2, 3];
+      context.bufferData(context.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), context.STATIC_DRAW);
+      context.enableVertexAttribArray(program.inPos);
+      context.vertexAttribPointer(program.inPos, 2, context.FLOAT, false, 0, 0);
+      context.enable(context.DEPTH_TEST);
+      context.clearColor(0.0, 0.0, 0.0, 1.0);
+      return positionBuffer;
+    }
+
+    function initEvent() {
+      canvas.addEventListener('mousemove', handleMouse);
+      window.onresize = handleResize;
+      handleResize();
+      requestAnimationFrame(handleRender);
+    }
+
+    initContext() && initProgram() && initBuffer() && initEvent();
+  </script>
+</body>
+</html>
